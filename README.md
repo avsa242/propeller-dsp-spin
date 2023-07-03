@@ -9,7 +9,7 @@ This is a P8X32A/Propeller, P2X8C4M64P/Propeller 2 library of DSP routines.
 ## Salient Features
 
 P1:
-* Fast Fourier Transform (FFT), default 1024-point (~34ms using original test input data)
+* FFT/Fast Fourier Transform, default 1024-point (~34ms using original test input data)
 
 
 ## Requirements
@@ -38,4 +38,9 @@ P2/SPIN2:
 
 * Very early in development - may malfunction, or outright fail to build
 * TBD
+
+
+## Acknowledgements
+
+* dsp.fft.spin: Based on Michael Rychlik (heater)'s `heater_fft.spin`
 
