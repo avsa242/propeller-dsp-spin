@@ -1,0 +1,264 @@
+{
+    --------------------------------------------
+    Filename: dsp.fft.spin2
+    Author: Jesse Burt
+    Description: Fast Fourier Transform (P2 version)
+    Started Jan 25, 2011
+    Updated Jul 06, 2023
+    See end of file for terms of use.
+    --------------------------------------------
+
+    NOTE: This is based on heater_fft.spin,
+    originally by Michael Rychlik, modified for formatting
+    and unused code removed for simplicity and clarity
+
+    Specifications:
+        In-place radix-2 decimation in time FFT
+        1024-point FFT: 34ms (* on original demo test data)
+
+    Usage:
+        1) Application should reserve two 1024 arrays of LONGs for input and output data, x and y
+        2) Place input signal into the x array (values 13-bit signed; -4096..4095)
+        3) Clear the y array.
+        4) Call butterflies() giving a command and addresses of the arrays as parameters.
+        5) The command is one or more of the following bits set:
+               CMD_DECIMATE   - Perform bit-reversal reordering on the data, results in x and y
+               CMD_BUTTERFLY  - Perform the actual FFT butterfly calculations, results in x and y
+               CMD_MAGNITUDE  - Convert resulting x and y values to frequency magnitudes in x
+
+        6) For some applications it may be as well to write the input data directly into x
+            LONG by LONG in the correct bit-reversed order. Then remove the CMD_DECIMATE in the
+            butterfly() call.
+            This could move 10 percent or so of the processing time to the input COG.
+
+    References:
+        https://forums.parallax.com/discussion/128292/heaters-fast-fourier-transform/p1
+        https://forums.parallax.com/discussion/127306/fourier-for-dummies-under-construction/p1
+}
+
+CON
+    'Specify size of FFT buffer here with length and log base 2 of the length.
+    'N.B. Changing this will require changing the "twiddle factor" tables.
+    '     and may also require changing the fixed point format (if going bigger)
+    FFT_RANGE       = 4096
+    FFT_SIZE        = 1024
+    LOG2_FFT_SIZE   = 10
+
+    CMD_DECIMATE    = %001
+    CMD_BUTTERFLY   = %010
+    CMD_MAGNITUDE   = %100
+
+VAR
+
+    long level
+    long flight
+    long butterflySpan
+    long butterfly_max
+    long butterfly
+    long temp
+    long flightSkip
+    long wSkip
+
+    long wx_ptr
+    long wy_ptr
+
+    long a
+    long b
+    long c
+    long d
+    long k1
+    long k2
+    long k3
+    long tx
+    long ty
+
+PUB  butterflies (cmd, bxp, byp)
+
+    if cmd & CMD_DECIMATE                          'Data bit-reversal reordering required?
+        decimate(bxp, byp)
+    if cmd & CMD_BUTTERFLY                         'FFT butterfly required?
+        bfly (bxp, byp)
+    if cmd & CMD_MAGNITUDE                         'Convert to magnitude required?
+        magnitude (bxp, byp)
+
+PUB decimate (bxp, byp) | i, revi, tx1, ty1
+'Radix-2 decimation in time.
+'Moves every sample of bx and by to a postion given by
+'reversing the bits of its original array index.
+    repeat i from 0 to FFT_SIZE - 1
+        revi := i rev (LOG2_FFT_SIZE-1)
+        if ( i < revi )
+            tx1 := long[bxp + i * 4]
+            ty1 := long[byp + i * 4]
+
+            long[bxp + i * 4] := long[bxp + revi * 4]
+            long[byp + i * 4] := long[byp + revi * 4]
+
+            long[bxp + revi * 4] := tx1
+            long[byp + revi * 4] := ty1
+
+PUB magnitude (bxp, byp) | i, real, imag
+
+    repeat i from 0 to (FFT_SIZE / 2)
+        'Scale down by half FFT size, back to original signal input range
+        real := long[bxp + i * 4] / (FFT_SIZE / 2)
+        imag := long[byp + i * 4] / (FFT_SIZE / 2)
+
+        'Frequency magnitude is square root of cos part sqaured plus sin part squared
+        long[bxp + i * 4] := sqrt((real * real) + (imag * imag))
+
+PUB bfly (bxp, byp) | b0x_ptr, b0y_ptr, b1x_ptr, b1y_ptr, flight_max
+'Apply FFT butterflies to N complex samples in x, in time decimated order!
+'Resulting FFT is in x in the correct order.
+    flight_max := FFT_SIZE >> 1' / 2              'Initial number of flights in a level
+    wSkip := FFT_SIZE                              'But we advance w pointer by 2 bytes per entry
+    butterflySpan := 4                             'Span measured in bytes
+    butterfly_max := 1                             '1 butterfly per flight initially
+    flightSkip := 4                                'But we advance pointer by 4 bytes per butterfly
+
+    'Loop through all the decimation levels
+    repeat LOG2_FFT_SIZE
+        b0x_ptr := bxp
+        b0y_ptr := byp
+
+        b1x_ptr := b0x_ptr + butterflySpan
+        b1y_ptr := b0y_ptr + butterflySpan
+
+        'Loop though all the flights in a level
+        repeat flight_max
+            wx_ptr := @wx
+            wy_ptr := @wy
+
+            'Loop through all the butterflies in a flight
+            repeat butterfly_max
+                'At last...the butterfly.
+                '----------------------
+                a := LONG[b1x_ptr]                 'Get X[b1]
+                b := LONG[b1y_ptr]
+
+                c := WORD[wx_ptr] signx 15                'Get W[wIndex]
+                d := WORD[wy_ptr] signx 15
+
+                k1 := (a * (c + d)) sar 12 ' / 4096 'Somewhat optimized complex multiply
+                k2 := (d * (a + b)) sar 12 ' / 4096 '   T = X[b1] * W[wIndex]
+                k3 := (c * (b - a)) sar 12 ' / 4096
+                tx := k1 - k2
+                ty := k1 + k3
+
+                k1 := LONG[b0x_ptr]                'bx[b0]
+                k2 := LONG[b0y_ptr]                'by[b0]
+                LONG[b1x_ptr] := k1 - tx           'X[b1] = X[b0] - T
+                LONG[b1y_ptr] := k2 - ty
+
+                LONG[b0x_ptr] := k1 + tx           'X[b0] = X[b0] + T
+                LONG[b0y_ptr] := k2 + ty
+                '---------------------
+
+                b0x_ptr += 4                       'Advance to next butterfly in flight,
+                b0y_ptr += 4                       'skiping 4 bytes for each.
+
+                b1x_ptr += 4
+                b1y_ptr += 4
+
+                wx_ptr += wSkip                    'Advance to next w
+                wy_ptr += wSkip
+
+            b0x_ptr += flightSkip                  'Advance to first butterfly of next flight
+            b0y_ptr += flightSkip
+            b1x_ptr += flightSkip
+            b1y_ptr += flightSkip
+
+        butterflySpan <<= 1                        'On the next level butterflies are twice as wide
+        flightSkip <<= 1                           'and so is the flight skip
+
+        flight_max >>= 1                           'On the next level there are half as many flights
+        wSkip >>= 1                                'And w's are half as far apart
+        butterfly_max <<= 1                        'On the next level there are twice the butterflies per flight
+
+DAT
+
+wx  word 4096, 4095, 4095, 4095, 4094, 4094, 4093, 4092, 4091, 4089, 4088, 4086, 4084, 4082, 4080, 4078
+    word 4076, 4073, 4071, 4068, 4065, 4062, 4058, 4055, 4051, 4047, 4043, 4039, 4035, 4031, 4026, 4022
+    word 4017, 4012, 4007, 4001, 3996, 3990, 3985, 3979, 3973, 3967, 3960, 3954, 3947, 3940, 3933, 3926
+    word 3919, 3912, 3904, 3897, 3889, 3881, 3873, 3864, 3856, 3848, 3839, 3830, 3821, 3812, 3803, 3793
+    word 3784, 3774, 3764, 3754, 3744, 3734, 3723, 3713, 3702, 3691, 3680, 3669, 3658, 3647, 3635, 3624
+    word 3612, 3600, 3588, 3576, 3563, 3551, 3538, 3526, 3513, 3500, 3487, 3473, 3460, 3447, 3433, 3419
+    word 3405, 3391, 3377, 3363, 3348, 3334, 3319, 3304, 3289, 3274, 3259, 3244, 3229, 3213, 3197, 3182
+    word 3166, 3150, 3134, 3117, 3101, 3085, 3068, 3051, 3034, 3018, 3000, 2983, 2966, 2949, 2931, 2914
+    word 2896, 2878, 2860, 2842, 2824, 2806, 2787, 2769, 2750, 2732, 2713, 2694, 2675, 2656, 2637, 2617
+    word 2598, 2578, 2559, 2539, 2519, 2500, 2480, 2460, 2439, 2419, 2399, 2379, 2358, 2337, 2317, 2296
+    word 2275, 2254, 2233, 2212, 2191, 2170, 2148, 2127, 2105, 2084, 2062, 2040, 2018, 1997, 1975, 1952
+    word 1930, 1908, 1886, 1864, 1841, 1819, 1796, 1773, 1751, 1728, 1705, 1682, 1659, 1636, 1613, 1590
+    word 1567, 1544, 1520, 1497, 1474, 1450, 1427, 1403, 1379, 1356, 1332, 1308, 1284, 1260, 1237, 1213
+    word 1189, 1164, 1140, 1116, 1092, 1068, 1043, 1019, 995, 970, 946, 921, 897, 872, 848, 823
+    word 799, 774, 749, 725, 700, 675, 650, 625, 601, 576, 551, 526, 501, 476, 451, 426
+    word 401, 376, 351, 326, 301, 276, 251, 226, 200, 175, 150, 125, 100, 75, 50, 25
+    word 0, -25, -50, -75, -100, -125, -150, -175, -200, -226, -251, -276, -301, -326, -351, -376
+    word -401, -426, -451, -476, -501, -526, -551, -576, -601, -625, -650, -675, -700, -725, -749, -774
+    word -799, -823, -848, -872, -897, -921, -946, -970, -995, -1019, -1043, -1068, -1092, -1116, -1140, -1164
+    word -1189, -1213, -1237, -1260, -1284, -1308, -1332, -1356, -1379, -1403, -1427, -1450, -1474, -1497, -1520, -1544
+    word -1567, -1590, -1613, -1636, -1659, -1682, -1705, -1728, -1751, -1773, -1796, -1819, -1841, -1864, -1886, -1908
+    word -1930, -1952, -1975, -1997, -2018, -2040, -2062, -2084, -2105, -2127, -2148, -2170, -2191, -2212, -2233, -2254
+    word -2275, -2296, -2317, -2337, -2358, -2379, -2399, -2419, -2439, -2460, -2480, -2500, -2519, -2539, -2559, -2578
+    word -2598, -2617, -2637, -2656, -2675, -2694, -2713, -2732, -2750, -2769, -2787, -2806, -2824, -2842, -2860, -2878
+    word -2896, -2914, -2931, -2949, -2966, -2983, -3000, -3018, -3034, -3051, -3068, -3085, -3101, -3117, -3134, -3150
+    word -3166, -3182, -3197, -3213, -3229, -3244, -3259, -3274, -3289, -3304, -3319, -3334, -3348, -3363, -3377, -3391
+    word -3405, -3419, -3433, -3447, -3460, -3473, -3487, -3500, -3513, -3526, -3538, -3551, -3563, -3576, -3588, -3600
+    word -3612, -3624, -3635, -3647, -3658, -3669, -3680, -3691, -3702, -3713, -3723, -3734, -3744, -3754, -3764, -3774
+    word -3784, -3793, -3803, -3812, -3821, -3830, -3839, -3848, -3856, -3864, -3873, -3881, -3889, -3897, -3904, -3912
+    word -3919, -3926, -3933, -3940, -3947, -3954, -3960, -3967, -3973, -3979, -3985, -3990, -3996, -4001, -4007, -4012
+    word -4017, -4022, -4026, -4031, -4035, -4039, -4043, -4047, -4051, -4055, -4058, -4062, -4065, -4068, -4071, -4073
+    word -4076, -4078, -4080, -4082, -4084, -4086, -4088, -4089, -4091, -4092, -4093, -4094, -4094, -4095, -4095, -4095
+
+
+wy  word 0, -25, -50, -75, -100, -125, -150, -175, -200, -226, -251, -276, -301, -326, -351, -376
+    word -401, -426, -451, -476, -501, -526, -551, -576, -601, -625, -650, -675, -700, -725, -749, -774
+    word -799, -823, -848, -872, -897, -921, -946, -970, -995, -1019, -1043, -1068, -1092, -1116, -1140, -1164
+    word -1189, -1213, -1237, -1260, -1284, -1308, -1332, -1356, -1379, -1403, -1427, -1450, -1474, -1497, -1520, -1544
+    word -1567, -1590, -1613, -1636, -1659, -1682, -1705, -1728, -1751, -1773, -1796, -1819, -1841, -1864, -1886, -1908
+    word -1930, -1952, -1975, -1997, -2018, -2040, -2062, -2084, -2105, -2127, -2148, -2170, -2191, -2212, -2233, -2254
+    word -2275, -2296, -2317, -2337, -2358, -2379, -2399, -2419, -2439, -2460, -2480, -2500, -2519, -2539, -2559, -2578
+    word -2598, -2617, -2637, -2656, -2675, -2694, -2713, -2732, -2750, -2769, -2787, -2806, -2824, -2842, -2860, -2878
+    word -2896, -2914, -2931, -2949, -2966, -2983, -3000, -3018, -3034, -3051, -3068, -3085, -3101, -3117, -3134, -3150
+    word -3166, -3182, -3197, -3213, -3229, -3244, -3259, -3274, -3289, -3304, -3319, -3334, -3348, -3363, -3377, -3391
+    word -3405, -3419, -3433, -3447, -3460, -3473, -3487, -3500, -3513, -3526, -3538, -3551, -3563, -3576, -3588, -3600
+    word -3612, -3624, -3635, -3647, -3658, -3669, -3680, -3691, -3702, -3713, -3723, -3734, -3744, -3754, -3764, -3774
+    word -3784, -3793, -3803, -3812, -3821, -3830, -3839, -3848, -3856, -3864, -3873, -3881, -3889, -3897, -3904, -3912
+    word -3919, -3926, -3933, -3940, -3947, -3954, -3960, -3967, -3973, -3979, -3985, -3990, -3996, -4001, -4007, -4012
+    word -4017, -4022, -4026, -4031, -4035, -4039, -4043, -4047, -4051, -4055, -4058, -4062, -4065, -4068, -4071, -4073
+    word -4076, -4078, -4080, -4082, -4084, -4086, -4088, -4089, -4091, -4092, -4093, -4094, -4094, -4095, -4095, -4095
+    word -4096, -4095, -4095, -4095, -4094, -4094, -4093, -4092, -4091, -4089, -4088, -4086, -4084, -4082, -4080, -4078
+    word -4076, -4073, -4071, -4068, -4065, -4062, -4058, -4055, -4051, -4047, -4043, -4039, -4035, -4031, -4026, -4022
+    word -4017, -4012, -4007, -4001, -3996, -3990, -3985, -3979, -3973, -3967, -3960, -3954, -3947, -3940, -3933, -3926
+    word -3919, -3912, -3904, -3897, -3889, -3881, -3873, -3864, -3856, -3848, -3839, -3830, -3821, -3812, -3803, -3793
+    word -3784, -3774, -3764, -3754, -3744, -3734, -3723, -3713, -3702, -3691, -3680, -3669, -3658, -3647, -3635, -3624
+    word -3612, -3600, -3588, -3576, -3563, -3551, -3538, -3526, -3513, -3500, -3487, -3473, -3460, -3447, -3433, -3419
+    word -3405, -3391, -3377, -3363, -3348, -3334, -3319, -3304, -3289, -3274, -3259, -3244, -3229, -3213, -3197, -3182
+    word -3166, -3150, -3134, -3117, -3101, -3085, -3068, -3051, -3034, -3018, -3000, -2983, -2966, -2949, -2931, -2914
+    word -2896, -2878, -2860, -2842, -2824, -2806, -2787, -2769, -2750, -2732, -2713, -2694, -2675, -2656, -2637, -2617
+    word -2598, -2578, -2559, -2539, -2519, -2500, -2480, -2460, -2439, -2419, -2399, -2379, -2358, -2337, -2317, -2296
+    word -2275, -2254, -2233, -2212, -2191, -2170, -2148, -2127, -2105, -2084, -2062, -2040, -2018, -1997, -1975, -1952
+ word -1930, -1908, -1886, -1864, -1841, -1819, -1796, -1773, -1751, -1728, -1705, -1682, -1659, -1636, -1613, -1590
+ word -1567, -1544, -1520, -1497, -1474, -1450, -1427, -1403, -1379, -1356, -1332, -1308, -1284, -1260, -1237, -1213
+ word -1189, -1164, -1140, -1116, -1092, -1068, -1043, -1019, -995, -970, -946, -921, -897, -872, -848, -823
+ word -799, -774, -749, -725, -700, -675, -650, -625, -601, -576, -551, -526, -501, -476, -451, -426
+ word -401, -376, -351, -326, -301, -276, -251, -226, -200, -175, -150, -125, -100, -75, -50, -25
+
+DAT
+{
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
+OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+}
+
