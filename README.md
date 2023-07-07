@@ -9,7 +9,10 @@ This is a P8X32A/Propeller, P2X8C4M64P/Propeller 2 library of DSP routines.
 ## Salient Features
 
 P1:
-* FFT/Fast Fourier Transform, default 1024-point (~34ms using original test input data)
+* FFT/Fast Fourier Transform, default 1024-point (PASM: ~34ms using original test input data)
+
+P2:
+* FFT/Fast Fourier Transform, default 1024-point (SPIN2: ~10ms using original test input data)
 
 
 ## Requirements
@@ -20,16 +23,17 @@ P1/SPIN1:
 
 P2/SPIN2:
 * p2-spin-standard-library
+* Memory: FFT-N points longs * 2 (e.g., 1024-point FFT requires 1024 * 4 * 2 = 8192bytes)
 
 
 ## Compiler Compatibility
 
 | Processor | Language | Compiler               | Backend      | Status                |
 |-----------|----------|------------------------|--------------|-----------------------|
-| P1	    | SPIN1    | FlexSpin (6.1.1)	| Bytecode     | OK                    |
-| P1	    | SPIN1    | FlexSpin (6.1.1)       | Native/PASM  | OK                    |
-| P2	    | SPIN2    | FlexSpin (6.1.1)       | NuCode       | Not yet implemented   |
-| P2        | SPIN2    | FlexSpin (6.1.1)       | Native/PASM2 | Not yet implemented   |
+| P1        | SPIN1    | FlexSpin (6.1.1)       | Bytecode     | OK                    |
+| P1        | SPIN1    | FlexSpin (6.1.1)       | Native/PASM  | OK                    |
+| P2        | SPIN2    | FlexSpin (6.1.1)       | NuCode       | Builds, doesn't run   |
+| P2        | SPIN2    | FlexSpin (6.1.1)       | Native/PASM2 | OK                    |
 
 (other versions or toolchains not listed are __not supported__, and _may or may not_ work)
 
@@ -42,5 +46,5 @@ P2/SPIN2:
 
 ## Acknowledgements
 
-* dsp.fft.spin: Based on Michael Rychlik (heater)'s `heater_fft.spin`
+* dsp.fft.spin[2]: Based on Michael Rychlik (heater)'s `heater_fft.spin`
 
