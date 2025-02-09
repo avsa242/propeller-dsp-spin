@@ -56,11 +56,11 @@ VAR
 
     long mailboxp
 
-PUB start(mailp)
+PUB start(mailp): s
 
     mailboxp := mailp
     long[mailboxp] := 0
-    cognew(@bfly, mailp)     'Check error?
+    s := cognew(@bfly, mailp)+1     'Check error?
 
 PUB butterflies(cmd, bxp, byp)
 
