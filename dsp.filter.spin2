@@ -1,0 +1,17 @@
+' filtering
+var long _prev_smp, _prev_out
+pub high_pass_filter(s, a): o
+' First-order high-pass filter
+'   s:          current/new sample
+'   a:          alpha (decay factor, filter aggressiveness), 0.0 .. 1.0 (float, clamped to range)
+'   Returns:    filtered output
+    if ( a <. 0.0 )                             ' clamp to range 0.0 .. 1.0
+        a := 0.0
+    if ( a >. 1.0 )
+        a := 1.0
+
+    o := round( float(s) -. float(_prev_smp) +. a *. float(_prev_out) )
+    _prev_smp := s
+    _prev_out := o
+
+
