@@ -1,12 +1,12 @@
 {
-    --------------------------------------------
-    Filename: dsp.fft.spin2
-    Author: Jesse Burt
-    Description: Fast Fourier Transform (P2 version)
-    Started Jan 25, 2011
-    Updated Jul 07, 2023
-    See end of file for terms of use.
-    --------------------------------------------
+----------------------------------------------------------------------------------------------------
+    Filename:       dsp.fft.spin2
+    Description:    Fast Fourier Transform
+    Author:         Jesse Burt
+    Started:        Jan 25, 2011
+    Updated:        Oct 28, 2025
+    Copyright (c) 2025 - See end of file for terms of use.
+----------------------------------------------------------------------------------------------------
 
     NOTE: This is based on heater_fft.spin,
     originally by Michael Rychlik, modified for formatting
@@ -42,7 +42,7 @@ CON
     '     and may also require changing the fixed point format (if going bigger)
     FFT_RANGE       = 4096
     FFT_SIZE        = 1024
-    LOG2_FFT_SIZE   = 10
+    LOG2_FFT_SIZE   = encod(FFT_SIZE)
 
     CMD_DECIMATE    = %001
     CMD_BUTTERFLY   = %010
