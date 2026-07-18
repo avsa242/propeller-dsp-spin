@@ -4,14 +4,19 @@
     Description:    A collection of filtering algorithms
     Author:         Jesse Burt
     Started:        Feb 8, 2025
-    Updated:        Feb 8, 2025
-    Copyright (c) 2025 - See end of file for terms of use.
+    Updated:        Jul 18, 2026
+    Copyright (c) 2026 - See end of file for terms of use.
 ----------------------------------------------------------------------------------------------------
 }
 
-var long _prev_smp, _prev_out                   ' working variables across calls
+var
+
+    ' high-pass filter
+    long _hpf_prev_smp, _hpf_prev_out           ' working variables across calls
+
+
 pub high_pass_filter_fo(s, a): o
-' First-order high-pass filter
+' First-order high-pass filter: yₜ = ( xₜ - xₜ₋₁ ) + αyₜ₋₁
 '   s:          current/new sample
 '   a:          alpha (decay factor, filter aggressiveness), 0.0 .. 1.0 (float, clamped to range)
 '   Returns:    filtered output
@@ -20,14 +25,15 @@ pub high_pass_filter_fo(s, a): o
     if ( a >. 1.0 )
         a := 1.0
 
-    o := round( float(s) -. float(_prev_smp) +. a *. float(_prev_out) )
-    _prev_smp := s                              ' record the current data as the new 'previous'
-    _prev_out := o
+    o := round( (float(s) -. float(_hpf_prev_smp) ) +. a *. float(_hpf_prev_out) )
+
+    _hpf_prev_smp := s                          ' record the current data as the new 'previous'
+    _hpf_prev_out := o
 
 
-DAT
+dat
 {
-Copyright 2025 Jesse Burt
+Copyright 2026 Jesse Burt
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
 associated documentation files (the "Software"), to deal in the Software without restriction,
