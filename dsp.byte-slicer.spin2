@@ -1,0 +1,184 @@
+{
+----------------------------------------------------------------------------------------------------
+    Filename:       dsp.byte-slicer.spin2
+    Description:    Byte slicer 
+    Author:         Jesse Burt
+    Started:        May 8, 2026
+    Updated:        Jul 26, 2026
+    Copyright (c) 2026 - See end of file for terms of use.
+----------------------------------------------------------------------------------------------------
+
+    This object will process a pre-captured buffer of signal state and timing pairs using the
+    selected slicing/demodulation algorithm to produce data.
+
+    PDM: Pulse-Distance Modulation
+        These signals represent data by utlizing a mark (carrier) of constant width, paired with
+        several varying space (no carrier) widths to represent different symbols
+        (such as binary digits 0, 1, and reset/end-of-message)
+        The data pairs would look something like:
+            record #    state   time (cycles)   equivalent timing in microseconds at 180MHz Fsys
+            0           1       90_000          500
+            1           0       90_000          500
+            2           1       90_000          500
+            3           0       1_440_000       8000
+            ...
+}
+{Spin2_v45}
+
+con
+
+' set maximum capture size, if one isn't specified at build-time
+#ifndef MAX_CAPTURE_SZ
+# define MAX_CAPTURE_SZ 1024
+#endif
+
+    ' PDM analyzer config structure (timings are in microseconds)
+    struct pdm_slicer_cfg_s(...
+        long mark_state, ...                    ' logic state of a mark
+        long mark_width, ...                    ' width of a mark
+        long mark_tol, ...                      ' tolerance (+/-) of mark width
+        long space_state, ...                   ' logic state of a space
+        long space_tol, ...                     ' tolerance (+/-) of space width
+        long one_width, ...                     ' space/gap width for a 1 symbol
+        long zero_width, ...                    ' space/gap width for a 0 symbol
+        long reset_width, ...                   ' space/gap width for a reset
+        long preamble_width, ...                ' space/gap width for a preamble bit
+        long preamble_end_width, ...            ' space/gap width for a preamble end
+        byte max_bits)                          ' maximum bits to slice
+
+    ' record of extracted timing
+    struct record_s(...
+        long state, ...                         ' state (typically 0 or 1)
+        long time)                              ' duration of this state
+
+    ' states capture buffer
+    struct capture_s(...
+        record_s record[MAX_CAPTURE_SZ], ...
+        long ticks_usec, ...                    ' ticks per microsecond of sample timings
+        word len)                               ' number of states/records
+
+
+    ' analyzer machine states
+    #0, PREAMBLE, SLICE
+
+
+pub pdm_slicer(^capture_s src, is, ^pdm_slicer_cfg_s cfg, p_dest, max_len): s, l | t, t_us, bit, tmp, p, state, pre_sym
+' Pulse-Distance data slicer
+'   (signals with constant mark widths paired with variable space widths to signify the symbol)
+'   src:        captured states (pointer to capture_s struct)
+'   is:         initial record index # within captured states
+'   cfg:        slicer configuration (pointer to pdm_slicer_cfg_s struct)
+'   p_dest:     destination to copy sliced data to (pointer)
+'   max_len:    maximum length of data to slice (bytes)
+
+'   Returns:
+'       s:  number of states from source data that were analyzed
+'       l:  length of sliced data (bytes)
+
+'    DEBUG("pdm_slicer() len=", udec_(src.len) )
+    state := PREAMBLE
+    p := is                                     ' init to specified record number within source data
+    repeat while (p < src.len)
+        case state
+            PREAMBLE:
+'                DEBUG("state=PREAMBLE")
+                pre_sym := 0                    ' init preamble symbols seen
+                repeat while (state == PREAMBLE)
+                    t := src.record[p].time / src.ticks_usec
+                    if ( src.record[p].state == cfg.mark_state )
+                        if ( timing_good(t, cfg.mark_width, cfg.mark_tol) )
+                        ' TODO
+'                            DEBUG(" ", udec_(p), " pulse preamble ", udec_(t) )
+                        else
+'                            DEBUG(" ", udec_(p), " bad pulse preamble ", udec_(t) )
+                    elseif ( src.record[p].state == cfg.space_state )
+                        if ( timing_good(t, cfg.preamble_width, cfg.space_tol) )
+                        ' TODO
+'                            DEBUG(" ", udec_(p), " gap preamble ", udec_(t) )
+                        elseif ( timing_good(t, cfg.preamble_end_width, cfg.space_tol) )
+                        ' end of preamble - switch to decode
+'                            DEBUG(" ", udec_(p), " gap preamble end ", udec_(t), " - preamble end")
+                            state := SLICE
+                            p++
+                            quit
+                        else
+'                            DEBUG(" ", udec_(p), " bad gap preamble ", udec_(t) )
+                    p++                         ' next pulse
+                    pre_sym++
+                    if ( pre_sym > 5 )'xxx
+                        state := SLICE
+                        quit
+            SLICE:
+'                DEBUG("state=SLICE")
+                bit := 7
+                tmp := 0
+                repeat while (state == SLICE)
+                    t := src.record[p].time / src.ticks_usec
+                    if ( src.record[p].state == cfg.mark_state )
+                        if ( timing_good(t, cfg.mark_width, cfg.mark_tol) )
+                        ' TODO
+'                            DEBUG(" ", udec_(p), " good pulse ", udec_(t) )
+                        else
+                        ' TODO
+'                            DEBUG(" ", udec_(p), " bad pulse ", udec_(t) )
+                    elseif ( src.record[p].state == cfg.space_state )
+                        if ( timing_good(t, cfg.one_width, cfg.space_tol) )
+'                            DEBUG(" ", udec_(p), " bit ", udec_(bit), " 1")
+                            tmp.[bit] := 1
+                            bit--
+                        elseif ( timing_good(t, cfg.zero_width, cfg.space_tol) )
+'                            DEBUG(" ", udec_(p), " bit ", udec_(bit), " 0")
+                            tmp.[bit] := 0
+                            bit--
+                        elseif ( t >= cfg.reset_width )
+'                            DEBUG(" ", udec_(p), " reset ", udec_(t) )
+                            bit := 7
+                            tmp := 0
+                            p++
+                            return p, l
+                        else
+'                            DEBUG(" ", udec_(p), " bad gap width ", udec_(t) )
+                    if ( bit < 0 )              ' 8 bits decoded
+                        byte[p_dest++] := tmp   ' write decoded byte to destination
+                        l++
+                        tmp := 0                '   and reset
+                        bit := 7
+                    p++
+                    if ( l >= max_len )
+'                        DEBUG(" max_len reached")
+                        return p, l
+                    if ( p > src.len )
+'                        DEBUG(" end of source data")
+                        quit
+
+
+pub timing_good(t, tt, tol): g
+' Verify timing value is valid
+'   t:      timing data
+'   tt:     target time
+'   tol:    tolerance (target-tolerance .. target+tolerance)
+    if ( (t >= tt-tol) and (t <= tt+tol) )
+        return true
+
+
+dat
+{
+Copyright 2026 Jesse Burt
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
+OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+}
+
+

@@ -13,27 +13,33 @@ P1:
 
 P2:
 * FFT/Fast Fourier Transform, default 1024-point (SPIN2: ~10ms using original test input data)
+* Byte slicer: translate line coding into binary data
+    * Pulse-Distance Modulation (PDM)
+* Filtering:
+    * First-order high-pass filter
 
 
 ## Requirements
 
 P1/SPIN1:
 * spin-standard-library
-* Memory: FFT-N points longs * 2 (e.g., 1024-point FFT requires 1024 * 4 * 2 = 8192bytes)
+* FFT:
+    * Memory: FFT-N points longs * 2 (e.g., 1024-point FFT requires 1024 * 4 * 2 = 8192bytes)
 
 P2/SPIN2:
 * p2-spin-standard-library
-* Memory: FFT-N points longs * 2 (e.g., 1024-point FFT requires 1024 * 4 * 2 = 8192bytes)
+* FFT:
+    * Memory: FFT-N points longs * 2 (e.g., 1024-point FFT requires 1024 * 4 * 2 = 8192bytes)
 
 
 ## Compiler Compatibility
 
 | Processor | Language | Compiler               | Backend      | Status                |
 |-----------|----------|------------------------|--------------|-----------------------|
-| P1        | SPIN1    | FlexSpin (6.1.1)       | Bytecode     | OK                    |
-| P1        | SPIN1    | FlexSpin (6.1.1)       | Native/PASM  | OK                    |
-| P2        | SPIN2    | FlexSpin (6.1.1)       | NuCode       | Builds, doesn't run   |
-| P2        | SPIN2    | FlexSpin (6.1.1)       | Native/PASM2 | OK                    |
+| P1        | SPIN1    | FlexSpin (7.7.0)       | Bytecode     | OK                    |
+| P1        | SPIN1    | FlexSpin (7.7.0)       | Native/PASM  | OK                    |
+| P2        | SPIN2    | FlexSpin (7.7.0)       | NuCode       | Runtime issues        |
+| P2        | SPIN2    | FlexSpin (7.7.0)       | Native/PASM2 | OK                    |
 
 (other versions or toolchains not listed are __not supported__, and _may or may not_ work)
 
