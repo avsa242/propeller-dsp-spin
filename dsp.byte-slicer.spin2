@@ -185,6 +185,25 @@ pub timing_good(t, tt, tol): g
         return true
 
 
+pub total_time(^capture_s cap): t | s
+' Get the total time of a capture
+'   cap:        pointer to sample buffer (capture_s struct)
+'   Returns:    total capture time in system ticks (at the time of capture)
+    s := 0
+    t := 0
+    repeat cap.len
+        t += cap.record[s++].time               ' add up all of the sample times
+
+    return t
+
+
+pub total_time_us(^capture_s cap): t
+' Get the total time of a capture
+'   cap:        pointer to sample buffer (capture_s struct)
+'   Returns:    total capture time in microseconds
+    return ( total_time(@cap) / cap.ticks_usec)                 ' convert ticks to microseconds
+
+
 dat
 {
 Copyright 2026 Jesse Burt
