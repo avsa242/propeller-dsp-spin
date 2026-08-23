@@ -4,7 +4,7 @@
     Description:    Byte slicer 
     Author:         Jesse Burt
     Started:        May 8, 2026
-    Updated:        Jul 26, 2026
+    Updated:        Aug 23, 2026
     Copyright (c) 2026 - See end of file for terms of use.
 ----------------------------------------------------------------------------------------------------
 
@@ -44,7 +44,10 @@ con
         long reset_width, ...                   ' space/gap width for a reset
         long preamble_width, ...                ' space/gap width for a preamble bit
         long preamble_end_width, ...            ' space/gap width for a preamble end
-        byte max_bits)                          ' maximum bits to slice
+        long eot_width, ...                     ' space/gap width for a end-of-transmission
+        byte max_bits, ...                      ' maximum bits to slice
+        byte has_preamble, ...
+        byte has_eot)
 
     ' record of extracted timing
     struct record_s(...
@@ -62,7 +65,7 @@ con
     #0, PREAMBLE, SLICE
 
 
-pub pdm_slicer(^capture_s src, is, ^pdm_slicer_cfg_s cfg, p_dest, max_len): s, l | t, t_us, bit, tmp, p, state, pre_sym
+pub pdm_slicer(^capture_s src, is, ^pdm_slicer_cfg_s cfg, p_dest, max_len): s, l | t, t_us, bit, tmp, p, state, pre_sym, eom
 ' Pulse-Distance data slicer
 '   (signals with constant mark widths paired with variable space widths to signify the symbol)
 '   src:        captured states (pointer to capture_s struct)
@@ -76,68 +79,89 @@ pub pdm_slicer(^capture_s src, is, ^pdm_slicer_cfg_s cfg, p_dest, max_len): s, l
 '       l:  length of sliced data (bytes)
 
 '    DEBUG("pdm_slicer() len=", udec_(src.len) )
-    state := PREAMBLE
+    if ( cfg.has_preamble )
+        state := PREAMBLE
+    else
+        state := SLICE
     p := is                                     ' init to specified record number within source data
+    DEBUG("pdm: starting at record #", sdec_(p))
+    repeat
+        if ( p >= src.len )
+            DEBUG("pdm: error: no mark found (", sdec(p), "/", sdec(src.len), ")")
+            return -1
+        if ( src.record[p].state == cfg.mark_state )
+            DEBUG("pdm: found mark in state #", udec_(p) )
+            quit
+        p++
+
     repeat while (p < src.len)
         case state
             PREAMBLE:
-'                DEBUG("state=PREAMBLE")
+                DEBUG("state=PREAMBLE")
                 pre_sym := 0                    ' init preamble symbols seen
                 repeat while (state == PREAMBLE)
                     t := src.record[p].time / src.ticks_usec
                     if ( src.record[p].state == cfg.mark_state )
                         if ( timing_good(t, cfg.mark_width, cfg.mark_tol) )
                         ' TODO
-'                            DEBUG(" ", udec_(p), " pulse preamble ", udec_(t) )
+                            DEBUG(" ", udec_(p), " pulse preamble ", udec_(t) )
                         else
-'                            DEBUG(" ", udec_(p), " bad pulse preamble ", udec_(t) )
+                            DEBUG(" ", udec_(p), " bad pulse preamble ", udec_(t) )
                     elseif ( src.record[p].state == cfg.space_state )
                         if ( timing_good(t, cfg.preamble_width, cfg.space_tol) )
                         ' TODO
-'                            DEBUG(" ", udec_(p), " gap preamble ", udec_(t) )
+                            DEBUG(" ", udec_(p), " gap preamble ", udec_(t) )
                         elseif ( timing_good(t, cfg.preamble_end_width, cfg.space_tol) )
                         ' end of preamble - switch to decode
-'                            DEBUG(" ", udec_(p), " gap preamble end ", udec_(t), " - preamble end")
+                            DEBUG(" ", udec_(p), " gap preamble end ", udec_(t), " - preamble end")
                             state := SLICE
                             p++
                             quit
                         else
-'                            DEBUG(" ", udec_(p), " bad gap preamble ", udec_(t) )
+                            DEBUG(" ", udec_(p), " bad gap preamble ", udec_(t) )
                     p++                         ' next pulse
                     pre_sym++
-                    if ( pre_sym > 5 )'xxx
+                    if ( pre_sym > 3 )'xxx
                         state := SLICE
                         quit
             SLICE:
-'                DEBUG("state=SLICE")
+                DEBUG("state=SLICE")
                 bit := 7
                 tmp := 0
+                eom := false
                 repeat while (state == SLICE)
                     t := src.record[p].time / src.ticks_usec
                     if ( src.record[p].state == cfg.mark_state )
                         if ( timing_good(t, cfg.mark_width, cfg.mark_tol) )
                         ' TODO
-'                            DEBUG(" ", udec_(p), " good pulse ", udec_(t) )
+                            DEBUG(" ", udec_(p), " good pulse ", udec_(t) )
                         else
                         ' TODO
-'                            DEBUG(" ", udec_(p), " bad pulse ", udec_(t) )
+                            DEBUG(" ", udec_(p), " bad pulse ", udec_(t) )
                     elseif ( src.record[p].state == cfg.space_state )
                         if ( timing_good(t, cfg.one_width, cfg.space_tol) )
-'                            DEBUG(" ", udec_(p), " bit ", udec_(bit), " 1")
+                            DEBUG(" ", udec_(p), " bit ", udec_(bit), " 1 ", udec_(t) )
                             tmp.[bit] := 1
                             bit--
                         elseif ( timing_good(t, cfg.zero_width, cfg.space_tol) )
-'                            DEBUG(" ", udec_(p), " bit ", udec_(bit), " 0")
+                            DEBUG(" ", udec_(p), " bit ", udec_(bit), " 0 ", udec_(t) )
                             tmp.[bit] := 0
                             bit--
-                        elseif ( t >= cfg.reset_width )
-'                            DEBUG(" ", udec_(p), " reset ", udec_(t) )
+                        elseif ( cfg.has_eot and timing_good(t, cfg.eot_width, cfg.space_tol) )
+                            DEBUG(" ", udec_(p), " end of message ", udec_(t) )
+                            eom := true
+                        elseif ( t >= (cfg.reset_width-cfg.space_tol) )
+                            DEBUG(" ", udec_(p), " reset ", udec_(t) )
                             bit := 7
                             tmp := 0
                             p++
                             return p, l
                         else
-'                            DEBUG(" ", udec_(p), " bad gap width ", udec_(t) )
+                            if ( eom )
+                                DEBUG(" leaving end of message")
+                                p++
+                                return p, l
+                            DEBUG(" ", udec_(p), " bad gap width ", udec_(t) )
                     if ( bit < 0 )              ' 8 bits decoded
                         byte[p_dest++] := tmp   ' write decoded byte to destination
                         l++
@@ -145,10 +169,10 @@ pub pdm_slicer(^capture_s src, is, ^pdm_slicer_cfg_s cfg, p_dest, max_len): s, l
                         bit := 7
                     p++
                     if ( l >= max_len )
-'                        DEBUG(" max_len reached")
-                        return p, l
+                        DEBUG(" max_len reached")
+'                        return p, l
                     if ( p > src.len )
-'                        DEBUG(" end of source data")
+                        DEBUG(" end of source data")
                         quit
 
 
@@ -180,5 +204,4 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FO
 DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
 OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 }
-
 
